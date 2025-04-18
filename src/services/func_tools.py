@@ -8,7 +8,7 @@ from schema.xano import (
     CalendarSlotsRequest,
     CreateAppointmentRequest,
     SearchPropertyResponse,
-    TimeSlot,
+    TimeSlot, CalendarSlotsResponse,
 )
 from services.xano import XanoService
 
@@ -18,6 +18,7 @@ from deepgram import (
 
 _APPOINTMENT_CREATED_MESSAGE = "Appointment created successfully"
 _APPOINTMENT_NOT_CREATED_MESSAGE = "Couldn't create appointment"
+
 
 class FunctionCallHandler:
 
@@ -35,7 +36,7 @@ class FunctionCallHandler:
         properties: SearchPropertyResponse = await self.xano_service.search_property(search_address)
         return properties
 
-    async def get_free_calendar_slots(self, params: dict) -> list[TimeSlot]:
+    async def get_free_calendar_slots(self, params: dict) -> CalendarSlotsResponse:
         from_dt = datetime.fromisoformat(params['from_ts'])
         to_dt = from_dt + timedelta(hours=100)
         post_code = params['prop_postcode']
@@ -57,7 +58,7 @@ class FunctionCallHandler:
             event_type=event_type,
         )
         slots: list[TimeSlot] | None = await self.xano_service.get_calendar_slots(payload)
-        return slots
+        return CalendarSlotsResponse(slots=slots)
 
     async def create_appointment(self, params: dict) -> str:
         print('-' * 250)
@@ -145,29 +146,21 @@ class FunctionCallHandler:
             result = await func(valid_dict_data)
             execution_time = time.monotonic() - start_time
             print(f"Function '{func_name}' execution time: {execution_time:.4f}s")
-            
-            # Handle the end_call function specially since it has a specific return structure
-            if func_name == "end_call" and isinstance(result, dict) and "function_response" in result:
-                # The end_call function already returns a formatted object that needs special handling
-                return json.dumps(result, indent=4, ensure_ascii=False)
-            
-            # Standard serialization based on return type
+
+            # TODO REFACTOR IT
             if isinstance(result, str) and (result.startswith('{') or result.startswith('[')):
-                # Result is already a JSON string, return as is
                 return result
             elif isinstance(result, (dict, list)):
-                # Result is a Python dict or list, serialize to JSON
                 return json.dumps(result, indent=4, ensure_ascii=False)
             elif hasattr(result, "model_dump"):
-                # Result is a Pydantic model
                 return json.dumps(result.model_dump(), indent=4, ensure_ascii=False)
             else:
-                # Result is some other type (like a primitive), wrap in a dict
                 return json.dumps({"result": result}, indent=4, ensure_ascii=False)
-            
+
         except Exception as e:
             print(f"Error executing function '{func_name}': {str(e)}")
-            return json.dumps({"error": str(e)}, indent=4, ensure_ascii=False)
+            # return json.dumps({"error": str(e)}, indent=4, ensure_ascii=False)
+            raise
 
 
 FUNCTION_DEFINITIONS = [
@@ -261,8 +254,8 @@ FUNCTION_DEFINITIONS = [
         }
     },
     {
-    "name": "end_call",
-    "description": """End the conversation and close the connection. Call this function when:
+        "name": "end_call",
+        "description": """End the conversation and close the connection. Call this function when:
      - User says goodbye, thank you, etc.
      - User indicates they're done ("that's all I need", "I'm all set", etc.)
      - User wants to end the conversation
