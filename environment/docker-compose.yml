@@ -1,0 +1,33 @@
+services:
+
+    ######################################################################################
+
+    postgres:
+        build:
+            context: postgres/
+            args:
+                - USER_ID=${USER_ID}
+                - GROUP_ID=${GROUP_ID}
+                - USER_NAME=${USER_NAME}
+        container_name: postgres-pg-voice-agent
+        networks:
+            - private-network
+        environment:
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+            POSTGRES_USER: ${POSTGRES_USER}
+            POSTGRES_DB: ${POSTGRES_DB}
+            POSTGRES_INITDB_ARGS: -E 'UTF-8' --lc-collate='en_US.UTF-8' --lc-ctype='en_US.UTF-8'
+        ports:
+            - ${POSTGRES_PORT}:5432
+        restart: unless-stopped
+        volumes:
+            - ${VOLUMES_PATH_POSTGRES}:/var/lib/postgresql/data
+
+    ######################################################################################
+
+networks:
+    private-network:
+        name: pg-voice-agent-network-explicit
+        driver: bridge
+
+######################################################################################

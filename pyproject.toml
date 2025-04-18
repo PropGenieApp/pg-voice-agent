@@ -1,0 +1,21 @@
+[project]
+name = "pg-voice-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.11.16",
+    "asyncpg>=0.30.0",
+    "deepgram-sdk>=3.11.0",
+    "fastapi>=0.115.12",
+    "psycopg2-binary>=2.9.10",
+    "pydantic-settings>=2.8.1",
+    "sqlalchemy>=2.0.40",
+    "uvicorn>=0.34.1",
+]
+
+[dependency-groups]
+dev = [
+    "pyaudio>=0.2.14",
+]
