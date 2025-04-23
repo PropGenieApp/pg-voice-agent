@@ -1,0 +1,7 @@
+.env
+!/docker-compose.yaml
+!/run.sh
+!/.env.example
+!/README.md
+!/.gitignore
+!/stop.sh

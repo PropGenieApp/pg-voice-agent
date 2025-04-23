@@ -24,6 +24,8 @@ class AppSettings(BaseSettings):
 
     xano_dev_api_token: str
 
+    deepgram_api_key: str
+
     def __str__(self, /) -> str:
         obj_for_output: Final = self._get_fields_for_output()
         return f'APP INFO: {json.dumps(obj_for_output, indent=4, ensure_ascii=False)}'

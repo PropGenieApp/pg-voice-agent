@@ -4,6 +4,7 @@ from http import HTTPStatus
 from typing import Final
 from logging import Logger
 from aiohttp import ClientSession
+from pydantic import ValidationError
 
 from schema.xano import CalendarSlotsRequest, CreateAppointmentRequest, SearchPropertyResponse, \
     TimeSlot
@@ -43,8 +44,14 @@ class XanoService(BaseService):
         if response.status != HTTPStatus.OK:
             self._logger.error(f'Failed to get calendar slots: {response.status}')
             return
-        calendar_slots_json = await response.json()
-        return [TimeSlot(**slot) for slot in calendar_slots_json]
+        calendar_slots_list = await response.json()
+        if not calendar_slots_list:
+            self._logger.warning('get_calendar_slots returned empty list')
+        try:
+            return [TimeSlot(**slot) for slot in calendar_slots_list]
+        except ValidationError as e:
+            self._logger.error(f'"get_calendar_slots" returned invalid response structure: {e}')
+            return None
 
     async def create_appointment(
         self,
@@ -56,7 +63,7 @@ class XanoService(BaseService):
             headers=self._headers,
         )
         if response.status != HTTPStatus.OK:
-            self._logger.error(f'Failed to create appointment: {response.status}')
+            self._logger.error(f'Failed to create appointment. Status: {response.status}. Text: {response.text}')
             return False
         return True
 
@@ -70,7 +77,14 @@ class XanoService(BaseService):
             self._logger.error(f'Failed to search property: {response.status}')
             return None
         properties_json = await response.json()
-        return SearchPropertyResponse(**properties_json)
+        try:
+            response = SearchPropertyResponse(**properties_json)
+        except ValidationError as e:
+            self._logger.error(f'"search_property" returned invalid response structure: {e}')
+            return None
+        if not response.items:
+            self._logger.warning(f'search_property returned empty list for address: {search_address}')
+        return response
 
 #####################################################################################################
 

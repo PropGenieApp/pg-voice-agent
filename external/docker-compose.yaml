@@ -1,0 +1,43 @@
+services:
+
+    ######################################################################################
+
+    pg-voice-agent-postgres:
+        image: postgres:${DB_VERSION}
+        environment:
+            POSTGRES_PASSWORD: ${DB_ADMIN_PASS}
+            POSTGRES_USER: ${DB_ADMIN_USER}
+            POSTGRES_DB: ${DB_NAME}
+            POSTGRES_INITDB_ARGS: -E 'UTF-8' --lc-collate='en_US.UTF-8' --lc-ctype='en_US.UTF-8'
+        networks:
+            - private-network
+        restart: always
+        volumes:
+            - ${DB_PATH}:/var/lib/postgresql/data
+
+    ######################################################################################
+
+    pg-voice-agent:
+        build:
+            context: ..
+            dockerfile: Dockerfile
+        env_file:
+          - .env
+        restart: always
+        depends_on:
+            pg-voice-agent-postgres:
+                condition: service_started
+        networks:
+          - private-network
+        ports:
+          - ${APP_PORT}:${APP_PORT}
+
+    ######################################################################################
+
+######################################################################################
+
+networks:
+    private-network:
+        driver: bridge
+
+######################################################################################

@@ -1,30 +1,39 @@
 #####################################################################################################
-
+from datetime import date
 from typing import Literal
 from pydantic import BaseModel
 
 
 #####################################################################################################
-
-class SearchPropertyItem(BaseModel):
-    external_id: str
+class BaseSearchPropertyItem(BaseModel):
     address: str
     city: str
     country: str
     state: str
     postcode: str
-    # property_type: str | None
-    # bedroom_count: int | None
-    # bathroom_count: int | None
-    # floor_count: int | None
-    # date_available_for_sale: date | None
-    # short_description: str | None
-    # long_description: str | None
-    # glazing: str | None
-    # parking_type: str | None
+
+class SearchPropertyItemXanoFormat(BaseSearchPropertyItem):
+    external_id: str
+    property_type: str | None
+    bedroom_count: int | None
+    bathroom_count: int | None
+    floor_count: int | None
+    date_available_for_sale: date | None
+    short_description: str | None
+    long_description: str | None
+    glazing: str | None
+    parking_type: str | None
+
+class SearchPropertyItemAgentFormat(BaseSearchPropertyItem):
+    property_id: str
+
 
 class SearchPropertyResponse(BaseModel):
-    items: list[SearchPropertyItem]
+    items: list[SearchPropertyItemXanoFormat]
+
+
+class SearchPropertyAgentFormat(BaseModel):
+    items: list[SearchPropertyItemAgentFormat]
 
 #####################################################################################################
 

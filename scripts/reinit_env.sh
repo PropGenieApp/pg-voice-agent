@@ -16,12 +16,9 @@ export LC_ALL=en_US.UTF-8
 
 ###############################################################################
 
-${RUN_PYTHON} -m pip -V
-
-${RUN_PYTHON} -m pip install --user --break-system-packages --upgrade pip
-
 # maybe install it via pip?
 curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 uv --version
 uv self update
 uv cache clean

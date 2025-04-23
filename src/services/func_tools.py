@@ -4,11 +4,13 @@ import time
 from datetime import datetime, timedelta
 from typing import Mapping
 
+from pydantic import BaseModel
+
 from schema.xano import (
     CalendarSlotsRequest,
     CreateAppointmentRequest,
     SearchPropertyResponse,
-    TimeSlot, CalendarSlotsResponse,
+    TimeSlot, CalendarSlotsResponse, SearchPropertyAgentFormat, SearchPropertyItemAgentFormat,
 )
 from services.xano import XanoService
 
@@ -31,14 +33,27 @@ class FunctionCallHandler:
             'end_call': self.end_call,
         }
 
-    async def search_for_properties(self, params: dict) -> SearchPropertyResponse:
+    async def search_for_properties(self, params: dict) -> SearchPropertyAgentFormat:
         search_address: str = params.get('search_address')
-        properties: SearchPropertyResponse = await self.xano_service.search_property(search_address)
-        return properties
+        properties: SearchPropertyResponse | None = await self.xano_service.search_property(search_address)
+        if not properties:
+            return SearchPropertyAgentFormat(items=[])
+        # Needed for replace property_id with external_id
+        properties_output = SearchPropertyAgentFormat(
+            items=[SearchPropertyItemAgentFormat(
+                property_id=p.external_id,
+                address=p.address,
+                city=p.city,
+                country=p.country,
+                state=p.state,
+                postcode=p.postcode,
+            ) for p in properties.items]
+        )
+        return properties_output
 
     async def get_free_calendar_slots(self, params: dict) -> CalendarSlotsResponse:
         from_dt = datetime.fromisoformat(params['from_ts'])
-        to_dt = from_dt + timedelta(hours=100)
+        to_dt = from_dt + timedelta(hours=50)
         post_code = params['prop_postcode']
         post_code = post_code.split()[0]
         event_type = params['event_type']
@@ -58,7 +73,9 @@ class FunctionCallHandler:
             event_type=event_type,
         )
         slots: list[TimeSlot] | None = await self.xano_service.get_calendar_slots(payload)
-        return CalendarSlotsResponse(slots=slots)
+        if not slots:
+            return CalendarSlotsResponse(slots=[])
+        return CalendarSlotsResponse(slots=slots[:10])
 
     async def create_appointment(self, params: dict) -> str:
         print('-' * 250)
@@ -68,18 +85,22 @@ class FunctionCallHandler:
         end = datetime.fromisoformat(params['end'])
         start_ts = int(start.timestamp()) * 1000
         end_ts = int(end.timestamp()) * 1000
-        payload = CreateAppointmentRequest(
-            start=start_ts,
-            end=end_ts,
-            name=params['name'],
-            address=params['address'],
-            contact=params['contact'],
-            agent_id=params['agent_id'],
-            event_type=params['event_type'],
-            property_id=params['property_id'],
-        )
+        try:
+            payload = CreateAppointmentRequest(
+                start=start_ts,
+                end=end_ts,
+                name=params['name'],
+                address=params['address'],
+                contact=params['contact'],
+                agent_id=params['agent_id'],
+                event_type=params['event_type'],
+                property_id=params['property_id'],
+            )
+        except Exception as ex:
+            print(ex)
+            raise
         response = await self.xano_service.create_appointment(payload)
-        if response is None:
+        if not response:
             return _APPOINTMENT_NOT_CREATED_MESSAGE
         return _APPOINTMENT_CREATED_MESSAGE
 
@@ -126,41 +147,39 @@ class FunctionCallHandler:
             error_msg = f'The value received is not valid json. Received value - {function_call_request.input}'
             return json.dumps({"error": error_msg}, indent=4, ensure_ascii=False)
 
-        # Parse input data
         try:
             # TODO This is a bug from the deepgram. So I need to find out how to handle it correctly
             valid_dict_data: dict = ast.literal_eval(input_data)
         except (ValueError, SyntaxError) as e:
             return json.dumps({"error": f"Invalid input format: {str(e)}"}, indent=4, ensure_ascii=False)
 
-        # Get the function from our mapping
         func = self.function_mapping.get(func_name)
         if not func:
             error_msg = f"Function {func_name} not found"
             print(error_msg)
             return json.dumps({"error": error_msg}, indent=4, ensure_ascii=False)
 
-        # Execute the function with timing
         try:
             start_time = time.monotonic()
             result = await func(valid_dict_data)
             execution_time = time.monotonic() - start_time
             print(f"Function '{func_name}' execution time: {execution_time:.4f}s")
+            if hasattr(result, 'model_dump_json'):
+                print(f'result: {result.model_dump_json(indent=4)}')
 
             # TODO REFACTOR IT
             if isinstance(result, str) and (result.startswith('{') or result.startswith('[')):
                 return result
             elif isinstance(result, (dict, list)):
                 return json.dumps(result, indent=4, ensure_ascii=False)
-            elif hasattr(result, "model_dump"):
+            elif isinstance(result, BaseModel) and hasattr(result, "model_dump"):
                 return json.dumps(result.model_dump(), indent=4, ensure_ascii=False)
             else:
                 return json.dumps({"result": result}, indent=4, ensure_ascii=False)
 
         except Exception as e:
             print(f"Error executing function '{func_name}': {str(e)}")
-            # return json.dumps({"error": str(e)}, indent=4, ensure_ascii=False)
-            raise
+            return json.dumps({"error": f"Error executing function '{func_name}': {str(e)}"}, indent=4, ensure_ascii=False)
 
 
 FUNCTION_DEFINITIONS = [
@@ -185,10 +204,6 @@ FUNCTION_DEFINITIONS = [
         "parameters": {
             "type": "object",
             "properties": {
-                # "to_ts": {
-                #     "type": "string",
-                #     "description": "The end time of the desired slot range (ISO format). Calculate as start time + 12 hours"
-                # },
                 "from_ts": {
                     "type": "string",
                     "description": "The start time of the desired slot range (ISO format)"

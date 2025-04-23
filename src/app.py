@@ -6,10 +6,13 @@ from typing import Any, Callable, Final, Sequence
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from configs.settings import AppSettings
 from db.connection.session import DatabaseManager
+from services.xano import XanoService
 from utils.aiohttp_utils import create_aiohttp_client
 
 #####################################################################################################
@@ -45,6 +48,12 @@ class App(FastAPI):
             allow_headers=["*"],
         )
         self.aiohttp_client: Final = create_aiohttp_client()
+        self.xano_service = XanoService(app_settings, self.aiohttp_client, logger)
+
+        # TODO: mount only if dev_mode is True
+        self.mount("/static", StaticFiles(directory="static"), name="static")
+
+        self.templates = Jinja2Templates(directory="templates")
 
 #####################################################################################################
 
