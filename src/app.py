@@ -60,7 +60,15 @@ class App(FastAPI):
 @asynccontextmanager
 async def lifespan(app: App):
 
+    async with app.db_manager.engine.begin() as conn:
+        from db.models import Base
+        await conn.run_sync(Base.metadata.create_all)
+
     yield
     # Cleanup on shutdown
+    # TODO FOR DEVELOPMENT PURPOSES. DELETE THIS CODE!!!
+    async with app.db_manager.engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        
     await app.db_manager.close()
     await app.aiohttp_client.close()
