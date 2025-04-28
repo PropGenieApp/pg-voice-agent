@@ -1,4 +1,4 @@
-# Epicbooks-ai.
+# PG-Voice-agent.
 
 * clone repository: `git clone git@github.com:PropGenieApp/pg-voice-agent.git`
 * copy `.env.example` -> `.env`
