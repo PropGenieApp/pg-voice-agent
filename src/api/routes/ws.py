@@ -2,8 +2,8 @@
 
 import logging
 from typing import Any, Final
-from fastapi import WebSocket, APIRouter
-from starlette.websockets import WebSocketDisconnect
+from fastapi import WebSocket, APIRouter, WebSocketDisconnect
+
 
 from services.voice_service import VoiceAssistant
 

@@ -28,6 +28,14 @@ async def dg_voice_demo(request: Request) -> HTMLResponse:
 
 #####################################################################################################
 
+@router.get("/get-demo-instructions")
+async def get_instructions() -> dict[str, str]:
+    instructions_filepath = BASE_DIR / 'src' / 'prompts' / 'dev_instructions.txt'
+    assistant_instructions = instructions_filepath.read_text()
+    return {'instructions': assistant_instructions}
+
+#####################################################################################################
+
 @router.post("/update-prompt")
 async def update_prompt(prompt_data: dict):
     try:
