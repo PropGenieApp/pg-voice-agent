@@ -33,10 +33,7 @@ async def get_agency(
     agency_id: str,
     agency_service: AgencyService = Depends(get_agency_service),
 ) -> AgencyOut:
-    try:
-        return await agency_service.get_agency(agency_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to get agency")
+    return await agency_service.get_agency(agency_id)
 
 
 #####################################################################################################

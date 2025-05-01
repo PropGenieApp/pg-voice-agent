@@ -24,12 +24,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         curl \
         vim \
         portaudio19-dev \
-        alsa-utils \
-        libasound2-dev \
         cmake; \
     ccache -s; \
     git --version; \
     cmake --version
+
+COPY --link --chown=root:root ./uv.lock ./pyproject.toml ./
+
 
 # Install python
 RUN --mount=type=cache,target=/var/cache/apt \
