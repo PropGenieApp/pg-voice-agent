@@ -1,16 +1,35 @@
+#####################################################################################################
+import json
 from datetime import datetime
 from logging import Logger
 from pathlib import Path
-
-from deepgram import DeepgramClient, AsyncAgentWebSocketClient, AgentWebSocketEvents, SettingsConfigurationOptions, \
-    FunctionCallRequest, DeepgramClientOptions, Agent, Think, Provider, FunctionCallResponse, Speak
+from fastapi import WebSocketDisconnect
+from deepgram import (
+    DeepgramClient,
+    AsyncAgentWebSocketClient,
+    AgentWebSocketEvents,
+    SettingsConfigurationOptions,
+    FunctionCallRequest,
+    DeepgramClientOptions,
+    Agent,
+    Think,
+    Provider,
+    FunctionCallResponse,
+    Speak,
+    Audio,
+    Output,
+    Input,
+)
 from deepgram.utils import verboselogs
-from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
+from pydantic import ValidationError
+from starlette.websockets import WebSocket, WebSocketState
 
 from configs.settings import AppSettings
+from schema.client import ClientJsonMessage
 from services.func_tools import FUNCTION_DEFINITIONS, FunctionCallHandler
 from services.xano import XanoService
 
+#####################################################################################################
 
 class VoiceAssistant:
     def __init__(
@@ -20,6 +39,7 @@ class VoiceAssistant:
         xano_service: XanoService,
         logger: Logger,
     ) -> None:
+        self._app_settings = app_settings
         self.function_call_handler: FunctionCallHandler = FunctionCallHandler(xano_service)
         self.client_ws = client_ws
 
@@ -27,8 +47,8 @@ class VoiceAssistant:
         config: DeepgramClientOptions = DeepgramClientOptions(
             options={
                 "keepalive": "true",
-                "microphone_record": "true",
-                "speaker_playback": "true",
+                "microphone_record": "false",
+                "speaker_playback": "false",
             },
             verbose=verboselogs.WARNING,
         )
@@ -38,51 +58,92 @@ class VoiceAssistant:
         self._is_client_active = None
         self._logger = logger
 
-    async def run(self):
+    async def _process_bytes_message(self, data: bytes) -> None:
+        if self.dg_connection:
+            is_send = await self.dg_connection.send(data)
+
+    async def _on_start(self, message: ClientJsonMessage) -> None:
+        if message.dev_mode and message.client_id is None and self._app_settings.dev_mode:
+            self.dg_connection: AsyncAgentWebSocketClient = self.deepgram_client.agent.asyncwebsocket.v("1")
+            self._register_handlers()
+            agent = Agent(
+                think=Think(
+                    provider=Provider(
+                        type='open_ai',
+                    ),
+                    model='gpt-4o-mini',
+                    instructions=self._instructions_path.read_text().format(now=datetime.now()),
+                    functions=FUNCTION_DEFINITIONS,
+                ),
+                speak=Speak(
+                    model="aura-2-pandora-en",  # As I understand they use ElevenLabs’ Turbo 2.5
+                    # provider='eleven_labs',
+                    # voice_id='GItJI30LSRkzJQjuHqkk',
+                    # voice_id='XW70ikSsadUbinwLMZ5w',
+                    # voice_id='eVItLK1UvXctxuaRV2Oq',
+                    # voice_id='MzqUf1HbJ8UmQ0wUsx2p',
+                )
+            )
+            audio = Audio(
+                input=Input(
+                    encoding='linear32',
+                    sample_rate=48000,
+                ),
+                output=Output(
+                    encoding='linear16',
+                    sample_rate=24000,
+                    container='none',
+                )
+            )
+            options = SettingsConfigurationOptions(agent=agent, audio=audio)
+            if await self.dg_connection.start(options) is False:
+                await self.client_ws.send_json(data={"type": "error", "detail": "error on startup deepgram connection"})
+            else:
+                await self.client_ws.send_json(data={"type": "settings_applied"})
+        else:
+            await self.client_ws.send_json({"type": "error", "detail": "Production execution is not ready yet"})
+
+    async def _on_finish(self) -> None:
+        await self.finish()
+
+    async def _process_json_message(self, message: ClientJsonMessage) -> None:
+        if message.type == "start":
+            await self._on_start(message)
+        elif message.type == "finish":
+            await self._on_finish()
+        else:
+            # TODO Implement interaction with agency service
+            self._logger.warning(f'Received unknown message type from client: "{message.type}"')
+            await self.client_ws.send_json({'type': 'error', "detail": f'Unknown message type: {message.type}'})
+
+    async def _handle_client_message(self) -> None:
+        message = await self.client_ws.receive()
+        self.client_ws._raise_on_disconnect(message)
+        if "bytes" in message and message["bytes"] is not None:
+            data = message['bytes']
+            await self._process_bytes_message(data)
+        elif "text" in message and message["text"] is not None:
+            try:
+                client_message = ClientJsonMessage.model_validate_json(message["text"])
+                await self._process_json_message(client_message)
+            except ValidationError:
+                await self.client_ws.send_json({"type": "error", "detail": 'Wrong message format'})
+            except Exception as e:
+                self._logger.error('Error when processing text message', exc_info=e)
+                await self.client_ws.send_json({"type": "error", "detail": "Unknown error occurred"})
+
+    async def run(self) -> None:
         if self.client_ws.client_state == WebSocketState.CONNECTED:
             self._is_client_active = True
         while self._is_client_active:
             try:
-                print('before client message')
-                data = await self.client_ws.receive_json()
-                print('after client message')
-                if data.get("type") == "start":
-                    self.dg_connection: AsyncAgentWebSocketClient = self.deepgram_client.agent.asyncwebsocket.v("1")
-                    self._register_handlers()
-                    options = data.get("options")
-                    # TODO Del hardcode
-                    if options is None:
-                        agent = Agent(
-                            think=Think(
-                                provider=Provider(
-                                    type='open_ai'
-                                ),
-                                model='gpt-4o-mini',
-                                instructions=self._instructions_path.read_text().format(now=datetime.now()),
-                                functions=FUNCTION_DEFINITIONS,
-                            ),
-                            speak=Speak(
-                                model=None,  # As I understand they use ElevenLabs’ Turbo 2.5
-                                provider='eleven_labs',
-                                voice_id='GItJI30LSRkzJQjuHqkk',
-                                # voice_id='XW70ikSsadUbinwLMZ5w',
-                                # voice_id='eVItLK1UvXctxuaRV2Oq',
-                                # voice_id='MzqUf1HbJ8UmQ0wUsx2p',
-                            )
-                        )
-                        options = SettingsConfigurationOptions(agent=agent)
-                    if await self.dg_connection.start(options) is False:
-                        print("Failed to start connection")
-                        return
-                elif data.get("type") == "stop":
-                    await self.finish()
-                else:
-                    print(f"Unknown message type: {data.get('type')}")
+                await self._handle_client_message()
             except WebSocketDisconnect:
                 print('WebsocketDisconnect')
                 if self.dg_connection and await self.dg_connection.is_connected():
                     await self.finish()
                 self._is_client_active = False
+                print('Gracefully disconnected')
 
     def _get_actual_instructions(self) -> str:
         # TODO return depending on time zone
@@ -91,18 +152,16 @@ class VoiceAssistant:
     async def finish(self) -> bool:
         # self._is_client_active = False
         if self.dg_connection:
-            return await self.dg_connection.finish()
+            is_finished = await self.dg_connection.finish()
+            self.dg_connection = None
+            return is_finished
 
     def _register_handlers(self):
         async def on_open(deepgram_agent, open, **kwargs):
             print(f"\n\n{open}\n\n")
 
         async def on_binary_data(deepgram_agent, data, **kwargs):
-            global warning_notice
-            if warning_notice:
-                print("Received binary data")
-                print("You can do something with the binary data here")
-                warning_notice = False
+            await self.client_ws.send_bytes(data)
 
         async def on_welcome(deepgram_agent, welcome, **kwargs):
             print(f"\n\n{welcome}\n\n")
@@ -112,17 +171,17 @@ class VoiceAssistant:
 
         async def on_conversation_text(deepgram_agent, conversation_text, **kwargs):
             d = True
-            print(f'conversation_text: {conversation_text}')
             await self.client_ws.send_text(conversation_text.to_json(indent=4))
 
         async def on_user_started_speaking(deepgram_agent, user_started_speaking, **kwargs):
-            print(f"\n\n{user_started_speaking}\n\n")
+            await self.client_ws.send_text(user_started_speaking.to_json())
 
         async def on_agent_thinking(deepgram_agent, agent_thinking, **kwargs):
             print(f"\n\n{agent_thinking}\n\n")
 
         async def on_function_calling(deepgram_agent, function_calling, **kwargs):
-            print(f"\n\nFUNCTION CALLING WAS TRIGGERED!\n\n")
+            if self._app_settings.dev_mode:
+                await self.client_ws.send_text(function_calling.to_json())
 
         async def on_function_call(
             deepgram_agent: AsyncAgentWebSocketClient,
@@ -136,7 +195,10 @@ class VoiceAssistant:
                 output=result
             )
             self._logger.debug(f'Function call handler result: {response}')
-            await deepgram_agent.send(response.to_json(ensure_ascii=False, indent=4))
+            json_response = response.to_json(ensure_ascii=False, indent=4)
+            await deepgram_agent.send(json_response)
+            if self._app_settings.dev_mode:
+                await self.client_ws.send_text(json_response)
             
         async def on_agent_started_speaking(deepgram_agent, agent_started_speaking, **kwargs):
             print(f"\n\n{agent_started_speaking}\n\n")
@@ -151,7 +213,12 @@ class VoiceAssistant:
             print(f"\n\n{error}\n\n")
 
         async def on_unhandled(deepgram_agent, unhandled, **kwargs):
-            print(f"\n\n{unhandled}\n\n")
+            try:
+                data = json.loads(unhandled['raw'])
+                if data.get('type') == "EndOfThought":
+                    print("EndOfThought received")
+            except Exception as ex:
+                print(f"\n\n{unhandled}\n\n")
 
         self.dg_connection.on(AgentWebSocketEvents.Open, on_open)
         self.dg_connection.on(AgentWebSocketEvents.AudioData, on_binary_data)
@@ -172,7 +239,4 @@ class VoiceAssistant:
         self.dg_connection.on(AgentWebSocketEvents.Error, on_error)
         self.dg_connection.on(AgentWebSocketEvents.Unhandled, on_unhandled)
 
-
-
-
-
+#####################################################################################################

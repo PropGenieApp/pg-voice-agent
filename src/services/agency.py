@@ -1,5 +1,7 @@
 # TODO: ADD REPOSITORY CLASS FOR AGENCY
-# TODO add validations and exceptions when create / update agency
+# TODO: add validations and exceptions when create / update agency
+# TODO: Consider the possibility of creating a template of instructions directly on
+#  the client side based on the selected tasks
 #####################################################################################################
 
 from typing import Final
@@ -24,6 +26,7 @@ from schema.agency import (
 from services.base import BaseService
 from db.models.agency import Agency as AgencyModel
 from services.func_tools import FUNCTION_DEFINITIONS
+from utils.prompt import PromptTemplateBuilder
 
 #####################################################################################################
 
@@ -38,17 +41,23 @@ class AgencyService(BaseService):
         self._session = session
 
     def _create_instructions(self, view_task: bool, valuation_task: bool) -> str:
-        # TODO implement
-        return ""
+        tasks = []
+        if view_task:
+            tasks.append('viewing')
+        if valuation_task:
+            tasks.append('valuation')
+        prompt_template_builder = PromptTemplateBuilder()
+        return prompt_template_builder.build_instructions(tasks=tasks)
 
     def _create_functions(self, view_task: bool, valuation_task: bool) -> list[Function]:
+        # FIXME
         return [Function.model_validate(func) for func in FUNCTION_DEFINITIONS]
-    
+
     def _create_think_settings(
-            self,
-            view_task: bool,
-            valuation_task: bool
-        ) -> ThinkSettings:
+        self,
+        view_task: bool,
+        valuation_task: bool
+    ) -> ThinkSettings:
         instructions = self._create_instructions(view_task, valuation_task)
         functions = self._create_functions(view_task, valuation_task)
         return ThinkSettings(
@@ -59,7 +68,7 @@ class AgencyService(BaseService):
             instructions=instructions,
             functions=functions,
         )
-    
+
     async def get_agency_list(self, limit: int = 10, offset: int = 0) -> list[AgencyOut]:
         stmt = select(AgencyModel).offset(offset).limit(limit)
         agencies = await self._session.execute(stmt)
