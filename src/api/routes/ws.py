@@ -9,7 +9,7 @@ from services.voice_service import VoiceAssistant
 
 #####################################################################################################
 
-router: Final = APIRouter(tags=['WS'], prefix='')
+router: Final = APIRouter(tags=['WS'], prefix='/api/ws')
 
 #####################################################################################################
 
@@ -54,7 +54,7 @@ manager = ConnectionManager()
 
 #####################################################################################################
 
-@router.websocket("/ws")
+@router.websocket("")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     voice_assistant = None
     manager.logger.info('New client connection attempt')

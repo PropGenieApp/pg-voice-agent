@@ -12,7 +12,7 @@ from services.agency import AgencyService
 
 #####################################################################################################
 
-router: Final = APIRouter(tags=["Agency"], prefix="/agency")
+router: Final = APIRouter(tags=["Agency"], prefix="/api/agency")
 
 #####################################################################################################
 
