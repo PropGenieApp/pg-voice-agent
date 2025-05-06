@@ -1,6 +1,6 @@
 #####################################################################################################
 import json
-from typing import Mapping
+from typing import Mapping, Final
 
 from configs.constants import BASE_DIR
 
@@ -8,7 +8,7 @@ from configs.constants import BASE_DIR
 
 class PromptTemplateBuilder:
 
-    _PROMPT_STORAGE_PATH = BASE_DIR / "src" / "prompts" / "instructions_blueprint.json"
+    _PROMPT_STORAGE_PATH: Final = BASE_DIR / "src" / "prompts" / "instructions_blueprint.json"
 
     def __init__(self) -> None:
         pass

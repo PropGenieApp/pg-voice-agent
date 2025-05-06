@@ -2,14 +2,15 @@
 
 import logging
 from typing import Any, Final
-from fastapi import WebSocket, APIRouter, WebSocketDisconnect
+from fastapi import WebSocket, APIRouter, WebSocketDisconnect, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
-
+from dependencies.common import get_ws_db
 from services.voice_service import VoiceAssistant
 
 #####################################################################################################
 
-router: Final = APIRouter(tags=['WS'], prefix='')
+router: Final = APIRouter(tags=['WS'], prefix='/api/ws')
 
 #####################################################################################################
 
@@ -18,18 +19,19 @@ class ConnectionManager:
         self.active_connections: dict[WebSocket, VoiceAssistant] = {}
         self.logger = logging.getLogger(__name__)
     
-    async def connect_client(self, websocket: WebSocket) -> VoiceAssistant:
+    async def connect_client(self, websocket: WebSocket, db_session) -> VoiceAssistant:
         await websocket.accept()
         # Connect to voice service
-        voice_service = VoiceAssistant(
+        voice_assistant = VoiceAssistant(
             app_settings=websocket.app.app_settings,
             xano_service=websocket.app.xano_service,
             client_ws=websocket,
             logger=websocket.app.logger,
+            db_session=db_session
         )
-        self.active_connections[websocket] = voice_service
+        self.active_connections[websocket] = voice_assistant
         self.logger.info('Client connected')
-        return voice_service
+        return voice_assistant
     
     async def disconnect_client(self, websocket: WebSocket):
         if websocket in self.active_connections:
@@ -54,12 +56,12 @@ manager = ConnectionManager()
 
 #####################################################################################################
 
-@router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket) -> None:
+@router.websocket("")
+async def websocket_endpoint(websocket: WebSocket, db_session: AsyncSession = Depends(get_ws_db)) -> None:
     voice_assistant = None
     manager.logger.info('New client connection attempt')
     try:
-        voice_assistant = await manager.connect_client(websocket)
+        voice_assistant = await manager.connect_client(websocket, db_session)
         await voice_assistant.run()
     except WebSocketDisconnect:
         manager.logger.info("Client closed connection")
