@@ -45,6 +45,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
     "${PYTHON}" --version;
 
 COPY --link ./scripts ./scripts
+COPY --link ./patches/ ./patches/
 
 RUN ./scripts/reinit_env.sh
 

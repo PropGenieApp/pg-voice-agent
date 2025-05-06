@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 from logging import Logger
 from pathlib import Path
+
 from fastapi import WebSocketDisconnect
 from deepgram import (
     DeepgramClient,
@@ -14,19 +15,26 @@ from deepgram import (
     Agent,
     Think,
     Provider,
-    FunctionCallResponse,
     Speak,
     Audio,
     Output,
-    Input,
+    Input, Context,
 )
 from deepgram.utils import verboselogs
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocket, WebSocketState
 
+from commands.commands import (
+    CreateAppointmentCommand,
+    EndCallCommand,
+    GetFreeCalendarSlotsCommand,
+    SearchPropertiesCommand,
+)
 from configs.settings import AppSettings
 from schema.client import ClientJsonMessage
-from services.func_tools import FUNCTION_DEFINITIONS, FunctionCallHandler
+from services.agency import AgencyService
+from services.func_tools import FUNCTION_DEFINITIONS
 from services.xano import XanoService
 
 #####################################################################################################
@@ -38,10 +46,12 @@ class VoiceAssistant:
         client_ws: WebSocket,
         xano_service: XanoService,
         logger: Logger,
+        db_session: AsyncSession,
     ) -> None:
         self._app_settings = app_settings
-        self.function_call_handler: FunctionCallHandler = FunctionCallHandler(xano_service)
+        self._xano_service = xano_service
         self.client_ws = client_ws
+        self._agency_service = AgencyService(session=db_session)
 
         # TODO init it later to set up micro and speaker.
         config: DeepgramClientOptions = DeepgramClientOptions(
@@ -62,10 +72,9 @@ class VoiceAssistant:
         if self.dg_connection:
             is_send = await self.dg_connection.send(data)
 
-    async def _on_start(self, message: ClientJsonMessage) -> None:
-        if message.dev_mode and message.client_id is None and self._app_settings.dev_mode:
-            self.dg_connection: AsyncAgentWebSocketClient = self.deepgram_client.agent.asyncwebsocket.v("1")
-            self._register_handlers()
+    async def _get_configuration_options(self, agency_id: str | None, dev_mode: bool = False) -> SettingsConfigurationOptions:
+        if dev_mode and self._app_settings.dev_mode:
+            # return dev mode options
             agent = Agent(
                 think=Think(
                     provider=Provider(
@@ -76,12 +85,11 @@ class VoiceAssistant:
                     functions=FUNCTION_DEFINITIONS,
                 ),
                 speak=Speak(
-                    model="aura-2-pandora-en",  # As I understand they use ElevenLabs’ Turbo 2.5
-                    # provider='eleven_labs',
-                    # voice_id='GItJI30LSRkzJQjuHqkk',
+                    # model="aura-2-pandora-en",
+                    model=None,
+                    provider='eleven_labs',
                     # voice_id='XW70ikSsadUbinwLMZ5w',
-                    # voice_id='eVItLK1UvXctxuaRV2Oq',
-                    # voice_id='MzqUf1HbJ8UmQ0wUsx2p',
+                    voice_id='SB13jgWjPxi4e4JoTT1H',
                 )
             )
             audio = Audio(
@@ -95,13 +103,29 @@ class VoiceAssistant:
                     container='none',
                 )
             )
-            options = SettingsConfigurationOptions(agent=agent, audio=audio)
-            if await self.dg_connection.start(options) is False:
-                await self.client_ws.send_json(data={"type": "error", "detail": "error on startup deepgram connection"})
-            else:
-                await self.client_ws.send_json(data={"type": "settings_applied"})
+            context = Context(
+                messages=[
+                    {
+                        "role": "assistant",
+                        "content": "Welcome to Pacitti Jones. I’m Margaret, your AI assistant."
+                                   " How may I help you today?"
+                    },
+                ],
+                replay=True
+            )
+            return SettingsConfigurationOptions(agent=agent, audio=audio, context=context)
         else:
-            await self.client_ws.send_json({"type": "error", "detail": "Production execution is not ready yet"})
+            settings = await self._agency_service.get_agency_configuration(agency_id)
+            return SettingsConfigurationOptions.from_dict(settings)
+
+    async def _on_start(self, message: ClientJsonMessage) -> None:
+        self.dg_connection: AsyncAgentWebSocketClient = self.deepgram_client.agent.asyncwebsocket.v("1")
+        self._register_handlers()
+        options = await self._get_configuration_options(message.client_id, message.dev_mode)
+        if await self.dg_connection.start(options) is False:
+            await self.client_ws.send_json(data={"type": "error", "detail": "error on startup deepgram connection"})
+        else:
+            await self.client_ws.send_json(data={"type": "settings_applied"})
 
     async def _on_finish(self) -> None:
         await self.finish()
@@ -110,6 +134,7 @@ class VoiceAssistant:
         if message.type == "start":
             await self._on_start(message)
         elif message.type == "finish":
+            self._logger.info('Client send finish message')
             await self._on_finish()
         else:
             # TODO Implement interaction with agency service
@@ -188,18 +213,34 @@ class VoiceAssistant:
             function_call_request: FunctionCallRequest,
             **kwargs,
         ) -> None:
-            self._logger.debug('Function call handler start working')
-            result = await self.function_call_handler.handle_function_call(function_call_request)
-            response = FunctionCallResponse(
-                function_call_id=function_call_request.function_call_id,
-                output=result
-            )
-            self._logger.debug(f'Function call handler result: {response}')
-            json_response = response.to_json(ensure_ascii=False, indent=4)
-            await deepgram_agent.send(json_response)
-            if self._app_settings.dev_mode:
-                await self.client_ws.send_text(json_response)
-            
+            self._logger.debug(f'Function call name: "{function_call_request.function_name}" received with params: {function_call_request.input}')
+            if not function_call_request.input:
+                await deepgram_agent.send(json.dumps({"error": "No input data provided for function call."}))
+            cmd_name = function_call_request.function_name
+            command_args = {
+                "xano_service": self._xano_service,
+                "logger": self._logger,
+                "client_ws": self.client_ws,
+                "deepgram_agent": deepgram_agent,
+                "dev_mode": self._app_settings.dev_mode,
+            }
+            match cmd_name:
+                case 'searchForProperties':
+                    cmd = SearchPropertiesCommand(**command_args)
+                    await cmd.execute(function_call_request)
+                case 'getFreeCalendarSlots':
+                    cmd = GetFreeCalendarSlotsCommand(**command_args)
+                    await cmd.execute(function_call_request)
+                case 'createAppointment':
+                    cmd = CreateAppointmentCommand(**command_args)
+                    await cmd.execute(function_call_request)
+                case 'end_call':
+                    cmd = EndCallCommand(exit_callback=self.finish, **command_args)
+                    await cmd.execute(function_call_request)
+                case _:
+                    self._logger.warning(f'Unknown function call: "{cmd_name}"')
+                    await deepgram_agent.send(json.dumps({"error": f"Unknown function call: {cmd_name}"}))
+                
         async def on_agent_started_speaking(deepgram_agent, agent_started_speaking, **kwargs):
             print(f"\n\n{agent_started_speaking}\n\n")
 

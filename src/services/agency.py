@@ -4,11 +4,13 @@
 #  the client side based on the selected tasks
 #####################################################################################################
 
-from typing import Final
+from datetime import datetime
+from typing import Final, Any
 
 from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app_types.exceptions import AgencyNotFound
 from schema.agency import (
     Agency,
     AgencyCreate,
@@ -118,5 +120,34 @@ class AgencyService(BaseService):
         await self._session.execute(stmt)
         res = await self._session.commit()
         return res.rowcount > 0
+    
+    async def get_agency_configuration(self, agency_id: str) -> dict[str, Any]:
+        stmt = select(AgencyModel).where(AgencyModel.id == agency_id)
+        agency_db = await self._session.execute(stmt)
+        agency_db = agency_db.scalar_one_or_none()
+        if not agency_db:
+            raise AgencyNotFound()
+        agency = Agency.model_validate(agency_db)
+        agency.settings.agent.think.instructions = agency.settings.agent.think.instructions.format(
+            assistant_name=agency.assistant_name,
+            agency_name=agency.agency_name,
+            location=agency.agency_location,
+            now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        settings = agency.settings.model_dump()
+        context = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": f"Welcome to {agency.agency_name}. I’m {agency.assistant_name},"
+                               f" your AI assistant. How may I help you today?"
+                }
+            ],
+
+            "replay": True,
+        }
+        print(agency.settings.agent.think.instructions)  # FIXME!
+        settings["context"] = context
+        return agency.model_dump()
 
 #####################################################################################################

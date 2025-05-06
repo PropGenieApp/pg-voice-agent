@@ -24,6 +24,8 @@ uv self update
 uv cache clean
 uv sync
 
+"${BASE_DIR}"/patch.py
+
 ###############################################################################
 
 echo ''
