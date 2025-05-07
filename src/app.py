@@ -6,8 +6,6 @@ from typing import Any, Callable, Final, Sequence
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from configs.settings import AppSettings
@@ -50,11 +48,6 @@ class App(FastAPI):
         self.aiohttp_client: Final = create_aiohttp_client()
         self.xano_service = XanoService(app_settings, self.aiohttp_client, logger)
 
-        # TODO: mount only if dev_mode is True
-        self.mount("/static", StaticFiles(directory="static"), name="static")
-
-        self.templates = Jinja2Templates(directory="templates")
-
 #####################################################################################################
 
 @asynccontextmanager
@@ -67,8 +60,8 @@ async def lifespan(app: App):
     yield
     # Cleanup on shutdown
     # TODO FOR DEVELOPMENT PURPOSES. DELETE THIS CODE!!!
-    async with app.db_manager.engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+    # async with app.db_manager.engine.begin() as conn:
+    #     await conn.run_sync(Base.metadata.drop_all)
         
     await app.db_manager.close()
     await app.aiohttp_client.close()
