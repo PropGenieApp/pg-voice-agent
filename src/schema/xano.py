@@ -59,9 +59,11 @@ class CreateAppointmentRequest(BaseModel):
     end: int
     name: str
     address: str
-    contact: str
+    email: str | None
+    phone: str | None
     event_type: Literal['Viewing', 'Valuation']
     property_id: str
     agent_id: str
 
+    # TODO add validation that at least one field email or phone should be provided
 #####################################################################################################

@@ -61,9 +61,13 @@ FUNCTION_DEFINITIONS: Final = [
                     "type": "string",
                     "description": "The appointment address"
                 },
-                "contact": {
-                    "type": "string",
-                    "description": "Contact details for the appointment (email or mobile phone)"
+                "email": {
+                    "type": ["string", "null"],
+                    "description": "Contact email"
+                },
+                "phone": {
+                    "type": ["string", "null"],
+                    "description": "Contact mobile phone"
                 },
                 "agent_id": {
                     "type": "string",
@@ -83,7 +87,7 @@ FUNCTION_DEFINITIONS: Final = [
                     "description": "Any extra info about the appointment"
                 }
             },
-            "required": ["start", "end", "name", "address", "contact", "agent_id", "event_type", "property_id"]
+            "required": ["start", "end", "name", "address", "agent_id", "event_type", "property_id", "email", "phone"],
         }
     },
     {
