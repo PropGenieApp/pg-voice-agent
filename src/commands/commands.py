@@ -1,5 +1,5 @@
 import ast
-import asyncio
+
 import json
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
@@ -12,6 +12,8 @@ from fastapi import WebSocket
 from deepgram import AsyncAgentWebSocketClient, FunctionCallResponse
 from pydantic import BaseModel
 
+from schema.conversation import ConversationState
+from schema.lead import LeadInfo
 from schema.xano import CalendarSlotsRequest, CalendarSlotsResponse, CreateAppointmentRequest, SearchPropertyAgentFormat, SearchPropertyItemAgentFormat, SearchPropertyResponse, TimeSlot
 from services.xano import XanoService
 
@@ -24,6 +26,7 @@ class FunctionCommand(ABC):
         logger: Logger,
         client_ws: WebSocket,
         deepgram_agent: AsyncAgentWebSocketClient,
+        conv_state: ConversationState,
         dev_mode: bool = False,
     ):
         self._xano_service = xano_service
@@ -31,11 +34,13 @@ class FunctionCommand(ABC):
         self._client_ws = client_ws
         self._deepgram_agent = deepgram_agent
         self._dev_mode = dev_mode
-    
+        self._conv_state = conv_state
+
     async def execute(self, function_call_request: FunctionCallRequest) -> None:
         """Common execution logic for all Commands."""
         self._logger.debug(f'Incoming function call request to {self.__class__.__name__}:')
         self._logger.debug(function_call_request.to_json(ensure_ascii=False, indent=4))
+        self._conv_state.tool_calls.add(function_call_request.function_name)
         input_data = function_call_request.input
         try:
             serialized_input = self.serialize_input(input_data)
@@ -92,23 +97,32 @@ class CreateAppointmentCommand(FunctionCommand):
         end = datetime.fromisoformat(params['end'])
         start_ts = int(start.timestamp()) * 1000
         end_ts = int(end.timestamp()) * 1000
+        if not (params.get('email') or params.get('phone')):
+            raise ValueError("At least one of email or phone must be provided")
         try:
             payload = CreateAppointmentRequest(
                 start=start_ts,
                 end=end_ts,
                 name=params['name'],
                 address=params['address'],
-                contact=params['contact'],
+                email=params['email'],
+                phone=params['phone'],
                 agent_id=params['agent_id'],
                 event_type=params['event_type'],
                 property_id=params['property_id'],
             )
         except Exception as ex:
-            print(ex)
-            raise
+            self._logger.error('Invalid payload for creating appointment', exc_info=ex)
+            raise ValueError(f'Invalid payload for creating appointment: {ex}')
         response = await self._xano_service.create_appointment(payload)
         if not response:
             return self._APPOINTMENT_NOT_CREATED_MESSAGE
+        self._conv_state.lead_created = True
+        self._conv_state.lead_info = LeadInfo(
+            name=params['name'],
+            email=params['email'],
+            phone=params['phone'],
+        )
         return self._APPOINTMENT_CREATED_MESSAGE
 
 
@@ -153,6 +167,7 @@ class GetFreeCalendarSlotsCommand(FunctionCommand):
             event_type=event_type,
         )
         slots: list[TimeSlot] | None = await self._xano_service.get_calendar_slots(payload)
+        self._conv_state.set_purpose_by_event_type(event_type)
         if not slots:
             return CalendarSlotsResponse(slots=[])
         return CalendarSlotsResponse(slots=slots[:self._MAX_NUMBER_OF_SLOTS_RESPONSE])
@@ -176,11 +191,10 @@ class EndCallCommand(FunctionCommand):
             result = f"Error executing function call {function_call_request.function_name}: {ex}"
         function_response = result["function_response"]
         inject_message = result["inject_message"]
-        print(inject_message)
         formatted_response = self.format_response(function_response, function_call_request.function_call_id)
         await self._deepgram_agent.send(formatted_response.to_json())
         await self._deepgram_agent.send(json.dumps(inject_message))
-        await asyncio.sleep(2)
+        # TODO work with the implementation of exit_callback. It should voice last inject message from agent
         await self._exit_callback()
 
     async def _execute(self, params: dict) -> dict:
